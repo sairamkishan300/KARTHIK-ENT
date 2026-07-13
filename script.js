@@ -8,7 +8,7 @@
    ========================================================================== */
 const MEDIA_CONFIG = {
   imagesCount: 42,         // Scanned total 42 images
-  videosCount: 2,          // Scanned total 2 videos
+  videosCount: 5,          // Scanned total 5 videos
   musicCount: 1,           // Scanned total 1 music file
   imageExtension: 'jpg',
   videoExtension: 'mp4',
@@ -809,7 +809,10 @@ function setupGalleryShowcase() {
     return;
   }
 
-  images.forEach((imgFilename, i) => {
+  // Display only the first 30 images
+  const galleryImages = images.slice(0, 30);
+
+  galleryImages.forEach((imgFilename, i) => {
     const card = document.createElement('div');
     card.className = 'gallery-card reveal-on-scroll';
     card.setAttribute('role', 'button');
@@ -838,7 +841,7 @@ function setupGalleryShowcase() {
     card.appendChild(img);
     galleryGrid.appendChild(card);
 
-    // Click handler utilizing First-Last-Invert-Play (FLIP)
+    // Open image fullscreen viewer trigger
     const openCard = () => {
       AppState.activePhotoIndex = i;
       
@@ -865,7 +868,7 @@ function setupGalleryShowcase() {
     });
   }, { threshold: 0.05, rootMargin: '0px 0px -40px 0px' });
 
-  document.querySelectorAll('.reveal-on-scroll').forEach(el => {
+  document.querySelectorAll('#gallery-grid .reveal-on-scroll').forEach(el => {
     revealObserver.observe(el);
   });
 }
@@ -918,6 +921,7 @@ const FullscreenPhotoViewer = (() => {
   function openWithFLIP(cardElement) {
     viewer.style.transition = 'none';
     viewer.style.opacity = 0;
+    viewer.classList.remove('hidden');
     viewer.classList.add('active');
     document.body.style.overflow = 'hidden';
 
@@ -997,6 +1001,7 @@ const FullscreenPhotoViewer = (() => {
         img.classList.remove('flip-transition');
         viewer.classList.remove('flip-animating');
         viewer.classList.remove('active');
+        viewer.classList.add('hidden');
         document.body.style.overflow = '';
         viewer.style.backgroundColor = '';
         resetZoom();
@@ -1004,6 +1009,7 @@ const FullscreenPhotoViewer = (() => {
       });
     } else {
       viewer.classList.remove('active');
+      viewer.classList.add('hidden');
       document.body.style.overflow = '';
       resetZoom();
     }
@@ -1346,13 +1352,57 @@ function setupVideoShowcase() {
   videoGrid.innerHTML = '';
   videoGrid.removeAttribute('aria-busy');
 
+  const images = AppState.mediaManifest.images || [];
   const videos = AppState.mediaManifest.videos || [];
 
-  if (videos.length === 0) {
-    videoGrid.innerHTML = '<div class="glass-card pad-md font-sans text-center" style="grid-column: 1/-1">No video memories added yet</div>';
-    return;
-  }
+  // A. Render remaining images (index 30 onwards)
+  const remainingImages = images.slice(30);
+  remainingImages.forEach((imgFilename, relativeIdx) => {
+    const globalIdx = 30 + relativeIdx;
+    const card = document.createElement('div');
+    card.className = 'gallery-card reveal-on-scroll';
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', `View photo memory ${globalIdx + 1}`);
 
+    const img = new Image();
+    img.alt = `Memory Photo ${globalIdx + 1}`;
+    img.loading = 'lazy';
+    
+    const filePath = `images/${imgFilename}`;
+    img.src = filePath;
+
+    img.onerror = () => {
+      img.src = generateFallbackPlaceholder('PHOTO MEMORY', globalIdx);
+    };
+
+    img.onload = () => {
+      img.decode().then(() => {
+        card.classList.add('loaded');
+      }).catch(() => {
+        card.classList.add('loaded');
+      });
+    };
+
+    card.appendChild(img);
+    videoGrid.appendChild(card);
+
+    const openCard = () => {
+      AppState.activePhotoIndex = globalIdx;
+      AppState.activeFlipCard = card;
+      FullscreenPhotoViewer.openWithFLIP(card);
+    };
+
+    card.addEventListener('click', openCard);
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openCard();
+      }
+    });
+  });
+
+  // B. Render scanned videos
   videos.forEach((vidFilename, i) => {
     const card = document.createElement('div');
     card.className = 'video-card glass-card reveal-on-scroll';
@@ -1360,7 +1410,6 @@ function setupVideoShowcase() {
     card.setAttribute('tabindex', '0');
     card.setAttribute('aria-label', `Play video clip ${i + 1}`);
 
-    // Generate consistent, high-quality, instant gradient thumbnail matching the theme
     const thumbnail = new Image();
     thumbnail.className = 'video-card-thumbnail';
     thumbnail.alt = `Video thumbnail ${i + 1}`;
@@ -1383,7 +1432,6 @@ function setupVideoShowcase() {
     card.appendChild(titleShelf);
     videoGrid.appendChild(card);
 
-    // Open video play viewer
     const playVideo = () => {
       CustomVideoPlayer.open(`videos/${vidFilename}`);
     };
@@ -1522,15 +1570,25 @@ const CustomVideoPlayer = (() => {
   }
 
   function open(srcPath) {
-    const bgMusic = document.getElementById('bg-music-element');
-    if (bgMusic && !bgMusic.paused) bgMusic.pause();
-
+    viewer.classList.remove('hidden');
     viewer.classList.add('active');
     document.body.style.overflow = 'hidden';
 
-    const source = video.querySelector('source');
-    source.src = srcPath;
+    // Set video src directly for robust mobile rendering
+    video.src = srcPath;
     video.load();
+
+    // Mute video by default
+    video.muted = true;
+    video.setAttribute('muted', 'true');
+    
+    // Sync mute button icon state
+    const unmuteSvg = muteBtn.querySelector('.icon-video-unmuted');
+    const muteSvg = muteBtn.querySelector('.icon-video-muted');
+    if (unmuteSvg && muteSvg) {
+      unmuteSvg.classList.add('hidden');
+      muteSvg.classList.remove('hidden');
+    }
 
     video.play().then(() => {
       showPlayState(true);
@@ -1544,14 +1602,9 @@ const CustomVideoPlayer = (() => {
 
   function close() {
     video.pause();
-    
-    // Resume background music safely
-    const bgMusic = document.getElementById('bg-music-element');
-    if (bgMusic && AppState.isMusicPlaying) {
-      bgMusic.play().catch(e => console.log(e));
-    }
 
     viewer.classList.remove('active');
+    viewer.classList.add('hidden');
     document.body.style.overflow = '';
     
     // Reset placements
@@ -1926,6 +1979,61 @@ function fadeMosaicToFamilyPhoto() {
   }, 1000);
 
   console.log("SURPRISE EXPERIENCE COMPLETE! THANK YOU.");
+}
+
+
+/* ==========================================================================
+   14B. MEDIA LOADING GRADIENT GENERATOR
+   ========================================================================== */
+function generateFallbackPlaceholder(name, index, width = 600, height = 800) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  const gradientSet = MEDIA_CONFIG.fallbackColors[index % MEDIA_CONFIG.fallbackColors.length];
+  const gradient = ctx.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, gradientSet[0]);
+  gradient.addColorStop(1, gradientSet[1]);
+
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+  ctx.lineWidth = 1;
+  const gridSize = 40;
+  for (let x = 0; x < width; x += gridSize) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+  }
+  for (let y = 0; y < height; y += gridSize) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+  }
+
+  ctx.save();
+  ctx.translate(width / 2, height / 2 - 40);
+  ctx.scale(12, 12);
+  ctx.beginPath();
+  ctx.moveTo(0, 3);
+  ctx.bezierCurveTo(-5, -5, -10, 3, 0, 10);
+  ctx.bezierCurveTo(10, 3, 5, -5, 0, 3);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+  ctx.shadowColor = '#ffb7c5';
+  ctx.shadowBlur = 15;
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = '#ffb7c5';
+  ctx.font = 'normal 400 36px "Cinzel", serif';
+  ctx.textAlign = 'center';
+  ctx.letterSpacing = '4px';
+  ctx.fillText('MEMORY COLLECTION', width / 2, height / 2 + 100);
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+  ctx.font = '300 22px "Inter", sans-serif';
+  ctx.fillText(`${name} ${index + 1}`, width / 2, height / 2 + 150);
+
+  return canvas.toDataURL('image/png');
 }
 
 
